@@ -35,53 +35,27 @@ public class WagonMovement : MonoBehaviour
         if (Input.touchCount > 0)
         {
             Touch touch = Input.GetTouch(0);
+            Ray ray = Camera.main.ScreenPointToRay(touch.position);
+            RaycastHit hit;
 
-            if (touch.phase == TouchPhase.Began)
+            if (touch.phase == TouchPhase.Began && Physics.Raycast(ray, out hit))
             {
-                Ray ray = Camera.main.ScreenPointToRay(touch.position);
-                RaycastHit hit;
-                if (Physics.Raycast(ray, out hit))
+                if (IsTouchingWagon(hit.transform))
                 {
-                    if (hit.transform == transform || hit.transform.IsChildOf(transform))
-                        currentLeader = TouchedPart.Head;
-                    else if (hit.transform == tail || hit.transform.IsChildOf(tail))
-                        currentLeader = TouchedPart.Tail;
-
-                    if (IsTouchingWagon(hit.transform))
-                    {
-                        isDragging = true;
-                        moveTimer = 0f;
-                    }
+                    currentLeader = (hit.transform == transform || hit.transform.IsChildOf(transform))
+                        ? TouchedPart.Head : TouchedPart.Tail;
+                    isDragging = true;
+                    moveTimer = 0f;
                 }
             }
 
             if (isDragging && (touch.phase == TouchPhase.Moved || touch.phase == TouchPhase.Stationary))
             {
-                Ray rayCheck = Camera.main.ScreenPointToRay(touch.position);
-                RaycastHit hitCheck;
-                if (Physics.Raycast(rayCheck, out hitCheck))
-                {
-                    if (IsTouchingWagon(hitCheck.transform))
-                    {
-                        return;
-                    }
-                }
-
                 Vector3 targetWorldPos = GetWorldPositionFromTouch(touch.position);
-                float distHead = Vector3.Distance(transform.position, targetWorldPos);
-                float distTail = Vector3.Distance(tail.position, targetWorldPos);
-
-                TouchedPart chosenPart = currentLeader;
-                if (!Mathf.Approximately(distHead, distTail))
-                {
-                    chosenPart = (distHead < distTail) ? TouchedPart.Head : TouchedPart.Tail;
-                }
-
-                Vector3 leaderPos = (chosenPart == TouchedPart.Head) ? transform.position : tail.position;
+                Vector3 leaderPos = (currentLeader == TouchedPart.Head) ? transform.position : tail.position;
                 Vector3 rawDir = targetWorldPos - leaderPos;
 
-                if (rawDir.magnitude < cellSize * 0.3f)
-                    return;
+                if (rawDir.magnitude < cellSize * 0.15f) return;
 
                 Vector3 quantizedDir = (Mathf.Abs(rawDir.x) >= Mathf.Abs(rawDir.z))
                     ? ((rawDir.x >= 0) ? Vector3.right : Vector3.left)
@@ -90,7 +64,7 @@ public class WagonMovement : MonoBehaviour
                 moveTimer += Time.deltaTime;
                 if (!isMoving && moveTimer >= moveInterval)
                 {
-                    MoveFixed(quantizedDir, chosenPart);
+                    MoveFixed(quantizedDir, currentLeader);
                     moveTimer = 0f;
                 }
             }
@@ -113,69 +87,43 @@ public class WagonMovement : MonoBehaviour
     {
         Plane plane = new Plane(Vector3.up, Vector3.zero);
         Ray ray = Camera.main.ScreenPointToRay(touchPos);
-        float distance;
-        if (plane.Raycast(ray, out distance))
-            return ray.GetPoint(distance);
-        return Vector3.zero;
+        return plane.Raycast(ray, out float distance) ? ray.GetPoint(distance) : Vector3.zero;
     }
 
     void MoveFixed(Vector3 direction, TouchedPart leader)
     {
-        if (leader == TouchedPart.Tail)
+        Transform main = (leader == TouchedPart.Head) ? transform : tail;
+        Transform secondary = middle;
+        Transform tertiary = (leader == TouchedPart.Head) ? tail : transform;
+
+        Vector3 oldMainPos = main.position;
+        Vector3 oldSecondaryPos = secondary.position;
+        Vector3 newMainPos = oldMainPos + (direction * cellSize);
+
+        if (IsOnTile(newMainPos) && !IsOccupiedByOtherWagon(newMainPos))
         {
-            Vector3 oldTailPos = tail.position;
-            Vector3 oldMiddlePos = middle.position;
-            Vector3 newTailPos = oldTailPos + (direction * cellSize);
-            if (IsOnTile(newTailPos) && !IsOccupiedByOtherWagon(newTailPos))
-            {
-                isMoving = true;
-                Quaternion newRot = Quaternion.LookRotation(direction);
-                tail.DORotate(newRot.eulerAngles, moveDuration).SetEase(Ease.OutQuad);
-                tail.DOMove(newTailPos, moveDuration).SetEase(Ease.OutQuad);
-                middle.DOMove(oldTailPos, moveDuration).SetEase(Ease.OutQuad);
-                transform.DOMove(oldMiddlePos, moveDuration).SetEase(Ease.OutQuad)
-                    .OnComplete(() => isMoving = false);
-            }
-        }
-        else
-        {
-            Vector3 oldHeadPos = transform.position;
-            Vector3 oldMiddlePos = middle.position;
-            Vector3 newHeadPos = oldHeadPos + (direction * cellSize);
-            if (IsOnTile(newHeadPos) && !IsOccupiedByOtherWagon(newHeadPos))
-            {
-                isMoving = true;
-                Quaternion newRot = Quaternion.LookRotation(direction);
-                transform.DORotate(newRot.eulerAngles, moveDuration).SetEase(Ease.OutQuad);
-                transform.DOMove(newHeadPos, moveDuration).SetEase(Ease.OutQuad);
-                middle.DOMove(oldHeadPos, moveDuration).SetEase(Ease.OutQuad);
-                tail.DOMove(oldMiddlePos, moveDuration).SetEase(Ease.OutQuad)
-                    .OnComplete(() => isMoving = false);
-            }
+            isMoving = true;
+            main.DOLookAt(main.position + direction, moveDuration, AxisConstraint.Y);
+            main.DOMove(newMainPos, moveDuration).SetEase(Ease.OutQuad);
+            secondary.DOMove(oldMainPos, moveDuration).SetEase(Ease.OutQuad);
+            tertiary.DOMove(oldSecondaryPos, moveDuration).SetEase(Ease.OutQuad)
+                .OnComplete(() => isMoving = false);
         }
     }
 
     bool IsOnTile(Vector3 pos)
     {
-        Collider[] colliders = Physics.OverlapSphere(pos, 0.1f, tileLayer);
-        return colliders.Length > 0;
+        return Physics.OverlapSphere(pos, 0.1f, tileLayer).Length > 0;
     }
 
     bool IsOccupiedByOtherWagon(Vector3 pos)
     {
-        Collider[] colliders = Physics.OverlapSphere(pos, 0.1f, wagonLayer);
-        foreach (Collider col in colliders)
-        {
-            if (col.transform == transform || col.transform == middle || col.transform == tail)
-                continue;
-            return true;
-        }
-        return false;
+        return Physics.OverlapSphere(pos, 0.5f, wagonLayer).Length > 0;
     }
 
     void OnTriggerEnter(Collider other)
     {
-        if (other.gameObject.tag == "Exit")
+        if (other.gameObject.CompareTag("Exit"))
         {
             MeshRenderer exitRenderer = other.GetComponent<MeshRenderer>();
             if (exitRenderer)
@@ -185,6 +133,7 @@ public class WagonMovement : MonoBehaviour
             }
         }
     }
+
 
     IEnumerator FillSlots(Material exitMat, Transform exitTransform)
     {

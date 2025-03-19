@@ -5128,8 +5128,12 @@ PrefabInstance:
       value: 
       objectReference: {fileID: 1223572494}
     - target: {fileID: 1315970254485074751, guid: e97d615e67e772b48857b91321b8d575, type: 3}
+      propertyPath: moveDuration
+      value: 0.15
+      objectReference: {fileID: 0}
+    - target: {fileID: 1315970254485074751, guid: e97d615e67e772b48857b91321b8d575, type: 3}
       propertyPath: moveInterval
-      value: 0.2
+      value: 0.15
       objectReference: {fileID: 0}
     - target: {fileID: 1974661138466007683, guid: e97d615e67e772b48857b91321b8d575, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
