@@ -8,12 +8,18 @@ public class WagonMovement : MonoBehaviour
     public Transform middle, tail;
     public float cellSize = 1.25f;
     public float moveDuration = 0.3f;
+    public float moveInterval = 0.3f;
     public LayerMask tileLayer;
     public LayerMask wagonLayer;
+    public Canvas Gameover;
 
-    private Vector2 touchStartPos;
+    private enum TouchedPart { Head, Tail }
+    private TouchedPart currentLeader = TouchedPart.Head;
+
     private bool isDragging = false;
     private bool isMoving = false;
+    private float moveTimer = 0f;
+
     private int headSlotsFilled = 0;
     private int middleSlotsFilled = 0;
     private int tailSlotsFilled = 0;
@@ -21,71 +27,131 @@ public class WagonMovement : MonoBehaviour
     private const int middleSlotCount = 4;
     private const int tailSlotCount = 2;
 
-    public Canvas Gameover;
+    public bool isFirst = true;
+    public Vector3 firstPosition;
 
     void Update()
     {
         if (Input.touchCount > 0)
         {
             Touch touch = Input.GetTouch(0);
+
             if (touch.phase == TouchPhase.Began)
             {
-                if (IsTouchingHead(touch))
+                Ray ray = Camera.main.ScreenPointToRay(touch.position);
+                RaycastHit hit;
+                if (Physics.Raycast(ray, out hit))
                 {
-                    isDragging = true;
-                    touchStartPos = touch.position;
-                }
-            }
-            if (isDragging && (touch.phase == TouchPhase.Moved || touch.phase == TouchPhase.Ended))
-            {
-                if (!isMoving)
-                {
-                    Vector2 swipeDelta = touch.position - touchStartPos;
-                    if (swipeDelta.magnitude > 50)
+                    if (hit.transform == transform || hit.transform.IsChildOf(transform))
+                        currentLeader = TouchedPart.Head;
+                    else if (hit.transform == tail || hit.transform.IsChildOf(tail))
+                        currentLeader = TouchedPart.Tail;
+
+                    if (IsTouchingWagon(hit.transform))
                     {
-                        Move(GetDirection(swipeDelta));
-                        touchStartPos = touch.position;
+                        isDragging = true;
+                        moveTimer = 0f;
                     }
                 }
-                if (touch.phase == TouchPhase.Ended)
-                    isDragging = false;
+            }
+
+            if (isDragging && (touch.phase == TouchPhase.Moved || touch.phase == TouchPhase.Stationary))
+            {
+                Ray rayCheck = Camera.main.ScreenPointToRay(touch.position);
+                RaycastHit hitCheck;
+                if (Physics.Raycast(rayCheck, out hitCheck))
+                {
+                    if (IsTouchingWagon(hitCheck.transform))
+                    {
+                        return;
+                    }
+                }
+
+                Vector3 targetWorldPos = GetWorldPositionFromTouch(touch.position);
+                float distHead = Vector3.Distance(transform.position, targetWorldPos);
+                float distTail = Vector3.Distance(tail.position, targetWorldPos);
+
+                TouchedPart chosenPart = currentLeader;
+                if (!Mathf.Approximately(distHead, distTail))
+                {
+                    chosenPart = (distHead < distTail) ? TouchedPart.Head : TouchedPart.Tail;
+                }
+
+                Vector3 leaderPos = (chosenPart == TouchedPart.Head) ? transform.position : tail.position;
+                Vector3 rawDir = targetWorldPos - leaderPos;
+
+                if (rawDir.magnitude < cellSize * 0.3f)
+                    return;
+
+                Vector3 quantizedDir = (Mathf.Abs(rawDir.x) >= Mathf.Abs(rawDir.z))
+                    ? ((rawDir.x >= 0) ? Vector3.right : Vector3.left)
+                    : ((rawDir.z >= 0) ? Vector3.forward : Vector3.back);
+
+                moveTimer += Time.deltaTime;
+                if (!isMoving && moveTimer >= moveInterval)
+                {
+                    MoveFixed(quantizedDir, chosenPart);
+                    moveTimer = 0f;
+                }
+            }
+
+            if (touch.phase == TouchPhase.Ended || touch.phase == TouchPhase.Canceled)
+            {
+                isDragging = false;
+                moveTimer = 0f;
             }
         }
     }
 
-    bool IsTouchingHead(Touch touch)
+    bool IsTouchingWagon(Transform hitTransform)
     {
-        Ray ray = Camera.main.ScreenPointToRay(touch.position);
-        RaycastHit hit;
-        if (Physics.Raycast(ray, out hit))
-            return hit.transform == transform || hit.transform.IsChildOf(transform.parent);
-        return false;
+        return hitTransform == transform || hitTransform == middle || hitTransform == tail ||
+               hitTransform.IsChildOf(transform) || hitTransform.IsChildOf(middle) || hitTransform.IsChildOf(tail);
     }
 
-    Vector3 GetDirection(Vector2 swipe)
+    Vector3 GetWorldPositionFromTouch(Vector2 touchPos)
     {
-        if (Mathf.Abs(swipe.x) > Mathf.Abs(swipe.y))
-            return (swipe.x > 0) ? Vector3.right : Vector3.left;
-        else
-            return (swipe.y > 0) ? Vector3.forward : Vector3.back;
+        Plane plane = new Plane(Vector3.up, Vector3.zero);
+        Ray ray = Camera.main.ScreenPointToRay(touchPos);
+        float distance;
+        if (plane.Raycast(ray, out distance))
+            return ray.GetPoint(distance);
+        return Vector3.zero;
     }
 
-    void Move(Vector3 direction)
+    void MoveFixed(Vector3 direction, TouchedPart leader)
     {
-        Vector3 oldHeadPos = transform.position;
-        Vector3 oldMiddlePos = middle.position;
-        Vector3 newHeadPos = oldHeadPos + (direction * cellSize);
-        if (newHeadPos == oldMiddlePos)
-            return;
-        if (IsOnTile(newHeadPos) && !IsOccupiedByOtherWagon(newHeadPos))
+        if (leader == TouchedPart.Tail)
         {
-            isMoving = true;
-            Quaternion newRotation = Quaternion.LookRotation(direction);
-            transform.DORotate(newRotation.eulerAngles, moveDuration).SetEase(Ease.OutQuad);
-            transform.DOMove(newHeadPos, moveDuration).SetEase(Ease.OutQuad);
-            middle.DOMove(oldHeadPos, moveDuration).SetEase(Ease.OutQuad);
-            tail.DOMove(oldMiddlePos, moveDuration).SetEase(Ease.OutQuad)
-                .OnComplete(() => isMoving = false);
+            Vector3 oldTailPos = tail.position;
+            Vector3 oldMiddlePos = middle.position;
+            Vector3 newTailPos = oldTailPos + (direction * cellSize);
+            if (IsOnTile(newTailPos) && !IsOccupiedByOtherWagon(newTailPos))
+            {
+                isMoving = true;
+                Quaternion newRot = Quaternion.LookRotation(direction);
+                tail.DORotate(newRot.eulerAngles, moveDuration).SetEase(Ease.OutQuad);
+                tail.DOMove(newTailPos, moveDuration).SetEase(Ease.OutQuad);
+                middle.DOMove(oldTailPos, moveDuration).SetEase(Ease.OutQuad);
+                transform.DOMove(oldMiddlePos, moveDuration).SetEase(Ease.OutQuad)
+                    .OnComplete(() => isMoving = false);
+            }
+        }
+        else
+        {
+            Vector3 oldHeadPos = transform.position;
+            Vector3 oldMiddlePos = middle.position;
+            Vector3 newHeadPos = oldHeadPos + (direction * cellSize);
+            if (IsOnTile(newHeadPos) && !IsOccupiedByOtherWagon(newHeadPos))
+            {
+                isMoving = true;
+                Quaternion newRot = Quaternion.LookRotation(direction);
+                transform.DORotate(newRot.eulerAngles, moveDuration).SetEase(Ease.OutQuad);
+                transform.DOMove(newHeadPos, moveDuration).SetEase(Ease.OutQuad);
+                middle.DOMove(oldHeadPos, moveDuration).SetEase(Ease.OutQuad);
+                tail.DOMove(oldMiddlePos, moveDuration).SetEase(Ease.OutQuad)
+                    .OnComplete(() => isMoving = false);
+            }
         }
     }
 
@@ -166,23 +232,26 @@ public class WagonMovement : MonoBehaviour
             {
                 if (p.slotsFilled < p.maxSlots)
                 {
-                    Animator anim = passenger.GetComponent<Animator>();
-                    if (anim)
-                        anim.SetBool("Jump", true);
-                    yield return new WaitForSeconds(0.5f);
-                    if (p.part.childCount > p.slotsFilled)
+                    Transform seat = p.part.childCount > p.slotsFilled ? p.part.GetChild(p.slotsFilled) : null;
+                    bool isFirst = p.slotsFilled == 0;
+                    if (isFirst)
                     {
-                        Transform seat = p.part.GetChild(p.slotsFilled);
-                        seat.gameObject.SetActive(true);
-                        Animator seatAnim = seat.GetComponent<Animator>();
-                        if (seatAnim)
-                            seatAnim.SetBool("Sit", true);
+                        firstPosition = passenger.position;
                     }
-                    passenger.gameObject.SetActive(false);
+                    PassengerController pc = passenger.GetComponent<PassengerController>();
+                    if (pc != null)
+                    {
+                        yield return StartCoroutine(pc.ProcessAssignment(seat, isFirst, firstPosition));
+                    }
+                    else
+                    {
+                        passenger.gameObject.SetActive(false);
+                    }
                     p.slotsFilled++;
                     Debug.Log(p.partName + " slot " + p.slotsFilled + " filled.");
                     passenger.SetParent(null);
                     assigned = true;
+                    yield return new WaitForSeconds(0.5f);
                     break;
                 }
             }
@@ -200,15 +269,11 @@ public class WagonMovement : MonoBehaviour
             if (p.slotsFilled >= p.maxSlots)
                 Debug.Log(p.partName + " is filled.");
         }
+        isFirst = true;
+        firstPosition = Vector3.zero;
         if (headSlotsFilled >= headSlotCount && middleSlotsFilled >= middleSlotCount && tailSlotsFilled >= tailSlotCount)
         {
-            Transform parentObj = transform.parent;
-            if (parentObj != null)
-            {
-                Sequence seq = DOTween.Sequence();
-                seq.OnComplete(() => Destroy(parentObj.gameObject));
-                Gameover.gameObject.SetActive(true);
-            }
+            FindAnyObjectByType<TimerDisplay>().GameOver();
         }
     }
 

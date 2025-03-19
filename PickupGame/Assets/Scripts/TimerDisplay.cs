@@ -11,11 +11,6 @@ public class TimerDisplay : MonoBehaviour
 
     void Update()
     {
-        if (GameObject.FindGameObjectsWithTag("Car").Length == 0)
-        {
-            timerRunning = false;
-        }
-
         if (timerRunning)
         {
             if (timeRemaining > 0)
@@ -25,13 +20,19 @@ public class TimerDisplay : MonoBehaviour
             }
             else
             {
-                timeRemaining = 0;
-                timerRunning = false;
-                UpdateTimerText(timeRemaining);
-                Gameover.gameObject.SetActive(true);
+                GameOver();
             }
         }
     }
+
+    public void GameOver()
+    {
+        timeRemaining = 0;
+        timerRunning = false;
+        UpdateTimerText(timeRemaining);
+        Gameover.gameObject.SetActive(true);
+    }
+
 
     void UpdateTimerText(float timeToDisplay)
     {
